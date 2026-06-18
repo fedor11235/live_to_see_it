@@ -124,6 +124,33 @@ button:disabled {
   font-size: 11px;
 }
 
+.brand-links {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 2px solid #3d3552;
+}
+
+.brand-links a {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  border: 2px solid #534966;
+  background: #211d31;
+  color: var(--muted);
+  padding: 4px 7px;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.brand-links a:hover {
+  border-color: var(--mint);
+  color: var(--mint);
+}
+
 .top-hud {
   top: 18px;
   right: 18px;
@@ -167,6 +194,13 @@ button:disabled {
 .icon-button.active {
   border-color: var(--mint);
   color: var(--mint);
+}
+
+.brand-plate .icon-button {
+  width: 30px;
+  height: 30px;
+  margin-left: 4px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.32);
 }
 
 .notice {
@@ -221,6 +255,20 @@ button:disabled {
   background: rgba(19, 16, 28, 0.96);
   box-shadow: 0 10px 0 rgba(0, 0, 0, 0.42), inset 0 0 0 2px #27213a;
   padding: 22px;
+}
+
+.round-panel {
+  left: 18px;
+  top: 88px;
+  width: min(420px, calc(100vw - 36px));
+  max-height: calc(100vh - 164px);
+  transform: none;
+  overflow: auto;
+  padding: 18px;
+}
+
+.round-panel h1 {
+  font-size: clamp(24px, 4vw, 36px);
 }
 
 .panel-title {
@@ -341,7 +389,7 @@ input:focus {
   color: var(--mint);
 }
 
-.pay-grid,
+.round-grid,
 .admin-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -459,6 +507,35 @@ input:focus {
   line-height: 1.55;
 }
 
+.document-section {
+  margin-bottom: 18px;
+}
+
+.document-section h2 {
+  margin: 0 0 8px;
+  color: var(--mint);
+  font-size: 16px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.document-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.document-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+}
+
 .admin-form {
   grid-template-columns: repeat(6, minmax(0, 1fr));
   align-items: end;
@@ -524,7 +601,16 @@ input:focus {
     padding: 8px;
   }
 
-  .brand-plate > span:last-child {
+  .brand-plate > span:nth-child(2) {
+    display: none;
+  }
+
+  .brand-links {
+    margin-left: 0;
+    padding-left: 6px;
+  }
+
+  .brand-links a span {
     display: none;
   }
 
@@ -563,8 +649,16 @@ input:focus {
 
   .admin-form,
   .admin-metrics,
-  .pay-grid {
+  .round-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .round-panel {
+    top: 72px;
+    left: 10px;
+    width: min(420px, calc(100vw - 20px));
+    max-height: calc(100vh - 258px);
+    padding: 16px;
   }
 
   .date-field,
@@ -592,6 +686,10 @@ input:focus {
   }
 
   .panel {
+    width: calc(100vw - 20px);
+  }
+
+  .round-panel {
     width: calc(100vw - 20px);
   }
 

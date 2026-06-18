@@ -40,8 +40,13 @@ app.get("/api/health", (_req, res) => {
 
 app.post("/api/auth/register", async (req, res, next) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, password, passwordConfirm } = req.body || {};
     validateEmailPassword(email, password);
+    if (passwordConfirm !== undefined && passwordConfirm !== password) {
+      const error = new Error("PASSWORD_MISMATCH");
+      error.status = 400;
+      throw error;
+    }
 
     const user = store.createUser(email, password);
     const storedUser = store.findUserById(user.id);
@@ -105,14 +110,20 @@ app.get("/api/ops/me", (req, res) => {
 app.post("/api/ops/login", (req, res, next) => {
   try {
     const { login, password } = req.body || {};
-    if (login !== operatorLogin() || password !== operatorPassword()) {
+    const operatorUser = store.findUserByEmail(String(login || ""));
+    const envOperatorMatches = login === operatorLogin() && password === operatorPassword();
+    const dbAdminMatches =
+      operatorUser?.role === "admin" && verifyPassword(String(password || ""), operatorUser.passwordHash);
+
+    if (!envOperatorMatches && !dbAdminMatches) {
       const error = new Error("INVALID_CREDENTIALS");
       error.status = 401;
       throw error;
     }
 
-    res.cookie("ops_session", createOperatorSession(login), sessionCookieOptions());
-    res.json({ operator: { login } });
+    const operatorName = dbAdminMatches ? operatorUser.email : login;
+    res.cookie("ops_session", createOperatorSession(operatorName), sessionCookieOptions());
+    res.json({ operator: { login: operatorName } });
   } catch (error) {
     next(error);
   }
@@ -172,8 +183,8 @@ app.post("/api/payments/start", requireUser, async (req, res, next) => {
 });
 
 app.get("/api/payments/mock/:paymentId/complete", (req, res) => {
-  store.markPaymentPaid(req.params.paymentId);
-  res.redirect("/?payment=paid");
+  const payment = store.markPaymentPaid(req.params.paymentId);
+  res.redirect(payment?.status === "paid" ? "/?payment=paid" : "/?payment=closed");
 });
 
 app.post("/api/payments/yookassa/webhook", async (req, res, next) => {
@@ -343,7 +354,7 @@ function readSession(token) {
 
 function readOperatorSession(token) {
   const session = readSession(token);
-  if (!session || session.kind !== "operator" || session.login !== operatorLogin()) return null;
+  if (!session || session.kind !== "operator" || !isKnownOperator(session.login)) return null;
   return session;
 }
 
@@ -381,4 +392,10 @@ function operatorLogin() {
 
 function operatorPassword() {
   return process.env.OPS_PASSWORD || process.env.ADMIN_PANEL_PASSWORD || "change-me-now";
+}
+
+function isKnownOperator(login) {
+  if (login === operatorLogin()) return true;
+  const user = store.findUserByEmail(String(login || ""));
+  return user?.role === "admin";
 }

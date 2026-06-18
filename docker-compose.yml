@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    ports:
+      - "127.0.0.1:3002:3002"
+    volumes:
+      - live_to_see_it_data:/app/data
+
+volumes:
+  live_to_see_it_data:

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowDown,
@@ -7,9 +7,14 @@ import {
   ArrowUp,
   CalendarDays,
   Coins,
+  FileText,
   HeartPulse,
+  Landmark,
   LogOut,
+  Mail,
   MapPin,
+  Scroll,
+  ShieldCheck,
   Skull,
   Volume2,
   VolumeX
@@ -26,13 +31,90 @@ const RUB = new Intl.NumberFormat("ru-RU", {
   maximumFractionDigits: 0
 });
 
+const DATE_TIME = new Intl.DateTimeFormat("ru-RU", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit"
+});
+
+const SoundContext = createContext({ soundEnabled: true, toggleSound: () => {}, audioEngine: null });
+
+function useSound() {
+  return useContext(SoundContext);
+}
+
+function SoundProvider({ children }) {
+  const [soundEnabled, setSoundEnabled] = useState(readSoundPreference);
+  const audioRef = useRef(getPixelAudioEngine());
+
+  useEffect(() => {
+    if (!soundEnabled) {
+      audioRef.current.stop();
+      return undefined;
+    }
+
+    const engine = audioRef.current;
+    engine.start();
+
+    function unlock() {
+      engine.start();
+    }
+
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, [soundEnabled]);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((current) => {
+      const next = !current;
+      window.localStorage.setItem("ltsi-sound", next ? "on" : "off");
+      return next;
+    });
+  }, []);
+
+  return (
+    <SoundContext.Provider value={{ soundEnabled, toggleSound, audioEngine: audioRef.current }}>
+      {children}
+    </SoundContext.Provider>
+  );
+}
+
+function SoundToggle() {
+  const { soundEnabled, toggleSound } = useSound();
+  return (
+    <IconButton label={soundEnabled ? "Выключить звук" : "Включить звук"} onClick={toggleSound}>
+      {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+    </IconButton>
+  );
+}
+
 function App() {
   const path = normalizedPath();
   return (
-    <>
-      {path === OPS_PATH ? <OperatorApp /> : path === "/cookies" ? <CookiePolicyApp /> : <GameApp />}
+    <SoundProvider>
+      {path === OPS_PATH ? (
+        <OperatorApp />
+      ) : path === "/cookies" ? (
+        <CookiePolicyApp />
+      ) : path === "/rules" ? (
+        <RulesApp />
+      ) : path === "/privacy" ? (
+        <PrivacyApp />
+      ) : path === "/contacts" ? (
+        <ContactsApp />
+      ) : path === "/offer" ? (
+        <OfferApp />
+      ) : (
+        <GameApp />
+      )}
       <CookieNotice />
-    </>
+    </SoundProvider>
   );
 }
 
@@ -41,8 +123,7 @@ function GameApp() {
   const [world, setWorld] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
-  const [soundEnabled, setSoundEnabled] = useState(readSoundPreference);
-  const audioRef = useRef(getPixelAudioEngine());
+  const { soundEnabled, audioEngine } = useSound();
 
   const refreshMe = useCallback(async () => {
     const response = await api("/api/me");
@@ -60,6 +141,7 @@ function GameApp() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("verified") === "ok") setNotice("Почта подтверждена.");
+    if (params.get("payment") === "closed") setNotice("Набор в текущий раунд уже закрыт.");
 
     refreshMe()
       .catch(() => setMe(null))
@@ -72,24 +154,6 @@ function GameApp() {
     const id = window.setInterval(() => refreshWorld().catch(() => {}), 2500);
     return () => window.clearInterval(id);
   }, [me?.id, refreshWorld]);
-
-  useEffect(() => {
-    if (!me?.paidAt || !soundEnabled) {
-      audioRef.current.stop();
-      return undefined;
-    }
-
-    function unlockAudio() {
-      audioRef.current.start();
-    }
-
-    window.addEventListener("pointerdown", unlockAudio, { once: true });
-    window.addEventListener("keydown", unlockAudio, { once: true });
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-    };
-  }, [me?.paidAt, soundEnabled]);
 
   useEffect(() => {
     if (!me) return undefined;
@@ -133,20 +197,8 @@ function GameApp() {
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
-    audioRef.current.stop();
     setMe(null);
     setWorld(null);
-  }
-
-  function toggleSound() {
-    const next = !soundEnabled;
-    setSoundEnabled(next);
-    window.localStorage.setItem("ltsi-sound", next ? "on" : "off");
-    if (next && me?.paidAt) {
-      audioRef.current.start();
-    } else {
-      audioRef.current.stop();
-    }
   }
 
   if (loading) {
@@ -155,13 +207,15 @@ function GameApp() {
 
   return (
     <main className="app-shell">
-      <PixelBackdrop world={world} me={me} audioEngine={soundEnabled ? audioRef.current : null} />
+      <PixelBackdrop world={world} me={me} audioEngine={soundEnabled ? audioEngine : null} />
 
       {world && <TopHud world={world} me={me} />}
 
       <header className="brand-plate" aria-label="Live to see it">
         <span className="brand-mark">LTSI</span>
         <span>Live to see it</span>
+        <GameLinks />
+        <SoundToggle />
       </header>
 
       {notice && (
@@ -172,9 +226,6 @@ function GameApp() {
 
       {me && (
         <div className="session-bar">
-          <IconButton label={soundEnabled ? "Выключить звук" : "Включить звук"} onClick={toggleSound}>
-            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-          </IconButton>
           <IconButton label="Выйти" onClick={logout}>
             <LogOut size={18} />
           </IconButton>
@@ -182,8 +233,8 @@ function GameApp() {
       )}
 
       {!me && <AuthPanel onAuth={refreshMe} />}
-      {me && !me.paidAt && <PaymentPanel me={me} world={world} onPaid={refreshWorld} />}
-      {me && me.paidAt && <GameControls me={me} world={world} refreshWorld={refreshWorld} />}
+      {me && world && <RoundPanel me={me} world={world} onPaid={refreshWorld} />}
+      {me && <GameControls me={me} world={world} refreshWorld={refreshWorld} />}
     </main>
   );
 }
@@ -217,12 +268,37 @@ function CookieNotice() {
   );
 }
 
+function GameLinks() {
+  return (
+    <nav className="brand-links" aria-label="Документы">
+      <a href="/rules" title="Правила игры">
+        <FileText size={15} />
+        <span>Правила</span>
+      </a>
+      <a href="/offer" title="Публичная оферта">
+        <Scroll size={15} />
+        <span>Оферта</span>
+      </a>
+      <a href="/contacts" title="Контакты и реквизиты">
+        <Landmark size={15} />
+        <span>Контакты</span>
+      </a>
+      <a href="/privacy" title="Политика конфиденциальности">
+        <ShieldCheck size={15} />
+        <span>Данные</span>
+      </a>
+    </nav>
+  );
+}
+
 function CookiePolicyApp() {
   return (
     <main className="operator-shell document-shell">
       <header className="brand-plate" aria-label="Live to see it">
         <span className="brand-mark">LTSI</span>
         <span>Live to see it</span>
+        <GameLinks />
+        <SoundToggle />
       </header>
 
       <article className="panel document-panel">
@@ -239,6 +315,324 @@ function CookiePolicyApp() {
         <p>
           Маркетинговые и рекламные cookie сейчас не используются. Если аналитика будет добавлена позже, для нее появится отдельное согласие.
         </p>
+        <div className="document-links">
+          <a className="dev-link" href="/rules">Правила игры</a>
+          <a className="dev-link" href="/privacy">Политика конфиденциальности</a>
+        </div>
+        <a className="dev-link" href="/">Вернуться в игру</a>
+      </article>
+    </main>
+  );
+}
+
+function RulesApp() {
+  return (
+    <main className="operator-shell document-shell">
+      <header className="brand-plate" aria-label="Live to see it">
+        <span className="brand-mark">LTSI</span>
+        <span>Live to see it</span>
+        <GameLinks />
+        <SoundToggle />
+      </header>
+
+      <article className="panel document-panel rules-document">
+        <div className="panel-title">
+          <span className="panel-kicker">Live to see it</span>
+          <h1>Правила игры</h1>
+        </div>
+
+        <section className="document-section">
+          <h2>Суть</h2>
+          <p>
+            У каждого зарегистрированного игрока есть пиксельный персонаж на бесконечном поле. Игрок может ходить по полю, видеть координаты и встречать других игроков или могилки тех, кто выбыл.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>Участие</h2>
+          <ol className="document-list">
+            <li>Нужно зарегистрироваться по почте и подтвердить email.</li>
+            <li>До старта игры можно оплатить взнос, который указан в текущем раунде.</li>
+            <li>После старта новые пользователи могут ходить по полю, но не входят в банк текущего раунда.</li>
+          </ol>
+        </section>
+
+        <section className="document-section">
+          <h2>Ежедневная отметка</h2>
+          <p>
+            Когда раунд начался, участник должен каждый игровой день нажать кнопку Я живой. День считается по таймзоне, указанной в панели оператора. Если участник пропускает хотя бы один день, персонаж умирает, а на поле остается могилка.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>Банк и победители</h2>
+          <p>
+            Взносы формируют общий банк. Организаторский процент удерживается отдельно, остальная сумма становится призовым фондом. После финиша призовой фонд делится поровну между участниками, которые не пропустили ни одной отметки.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>Честная игра</h2>
+          <p>
+            Запрещены попытки обходить авторизацию, подделывать оплату, ломать клиент или мешать другим игрокам. Администратор может отменять подозрительные участия и проверять спорные ситуации по логам.
+          </p>
+        </section>
+
+        <p className="legal-note">
+          Перед запуском денежных призов нужно отдельно проверить юридическую модель, налоги, оферту, правила возвратов и выплаты.
+        </p>
+        <div className="document-links">
+          <a className="dev-link" href="/privacy">Политика конфиденциальности</a>
+          <a className="dev-link" href="/cookies">Cookie</a>
+        </div>
+        <a className="dev-link" href="/">Вернуться в игру</a>
+      </article>
+    </main>
+  );
+}
+
+function PrivacyApp() {
+  return (
+    <main className="operator-shell document-shell">
+      <header className="brand-plate" aria-label="Live to see it">
+        <span className="brand-mark">LTSI</span>
+        <span>Live to see it</span>
+        <GameLinks />
+        <SoundToggle />
+      </header>
+
+      <article className="panel document-panel privacy-document">
+        <div className="panel-title">
+          <span className="panel-kicker">Персональные данные</span>
+          <h1>Политика конфиденциальности</h1>
+        </div>
+
+        <section className="document-section">
+          <h2>Оператор</h2>
+          <p>
+            Оператор проекта Live to see it обрабатывает данные пользователей для регистрации, участия в игре, приема взносов, защиты сервиса и связи с пользователями. Контакт для запросов: main.hubbox@mail.ru.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>Какие данные обрабатываются</h2>
+          <ol className="document-list">
+            <li>Email, хеш пароля, дата регистрации и подтверждения почты.</li>
+            <li>Игровые данные: координаты, статус персонажа, ежедневные отметки, дата смерти и видимые игровые события.</li>
+            <li>Платежные данные: сумма, статус, идентификатор платежа и провайдер. Реквизиты банковских карт хранятся на стороне платежного провайдера.</li>
+            <li>Технические cookie сессии, настройки интерфейса и служебные логи безопасности.</li>
+          </ol>
+        </section>
+
+        <section className="document-section">
+          <h2>Зачем это нужно</h2>
+          <p>
+            Данные используются для входа в аккаунт, подтверждения почты, работы игрового поля, учета участников, проверки оплаты, расчета банка, предотвращения злоупотреблений и выполнения обязательств перед пользователями.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>Передача данных</h2>
+          <p>
+            Данные могут передаваться сервисам хостинга, почтовому сервису для подтверждения регистрации и платежному провайдеру для приема взноса. Платежный провайдер самостоятельно обрабатывает платежные реквизиты по своим правилам.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>Права пользователя</h2>
+          <p>
+            Пользователь может запросить доступ к своим данным, исправление, удаление аккаунта или отзыв согласия. Запрос можно отправить на main.hubbox@mail.ru. Часть данных может сохраняться дольше, если это требуется для бухгалтерии, безопасности, споров или закона.
+          </p>
+        </section>
+
+        <p className="legal-note">
+          Перед публичным запуском текст нужно адаптировать под юридическое лицо или ИП, фактический хостинг, платежного провайдера и сроки хранения данных.
+        </p>
+        <div className="document-links">
+          <a className="dev-link" href="/rules">Правила игры</a>
+          <a className="dev-link" href="/cookies">Cookie</a>
+        </div>
+        <a className="dev-link" href="/">Вернуться в игру</a>
+      </article>
+    </main>
+  );
+}
+
+function ContactsApp() {
+  return (
+    <main className="operator-shell document-shell">
+      <header className="brand-plate" aria-label="Live to see it">
+        <span className="brand-mark">LTSI</span>
+        <span>Live to see it</span>
+        <GameLinks />
+        <SoundToggle />
+      </header>
+
+      <article className="panel document-panel">
+        <div className="panel-title">
+          <span className="panel-kicker">Реквизиты и контакты</span>
+          <h1>Live to see it</h1>
+        </div>
+
+        <section className="document-section">
+          <h2>Исполнитель</h2>
+          <p>
+            Услугу оказывает Индивидуальный предприниматель Авдеев Фёдор Васильевич, действующий на основании выписки из ЕГРИП.
+          </p>
+          <ol className="document-list">
+            <li>Полное наименование: Индивидуальный предприниматель Авдеев Фёдор Васильевич.</li>
+            <li>ИНН: 121526595037.</li>
+            <li>ОГРНИП: 325120000052090.</li>
+            <li>Дата регистрации: 26 декабря 2025 г.</li>
+            <li>Регистрирующий орган: УФНС России по Республике Марий Эл.</li>
+            <li>Основной вид деятельности: 62.01 — Разработка компьютерного программного обеспечения.</li>
+            <li>Адрес: Республика Марий Эл, город Йошкар-Ола.</li>
+            <li>Налоговый режим: УСН.</li>
+          </ol>
+        </section>
+
+        <section className="document-section">
+          <h2>Связь</h2>
+          <ol className="document-list">
+            <li>Электронная почта: <a className="dev-link" href="mailto:main.hubbox@mail.ru">main.hubbox@mail.ru</a>.</li>
+            <li>Телефон: <a className="dev-link" href="tel:+79027369322">+7 (902) 736-93-22</a>.</li>
+            <li>Время ответа: в рабочие дни, в течение суток с момента обращения.</li>
+          </ol>
+        </section>
+
+        <section className="document-section">
+          <h2>Услуга и стоимость</h2>
+          <p>
+            Услуга — платный доступ к раунду браузерной игры Live to see it: участие на игровом поле, ежедневная отметка и участие в распределении призового фонда раунда по правилам игры.
+          </p>
+          <ol className="document-list">
+            <li>Стоимость участия в раунде: 2000 ₽.</li>
+            <li>Услуга цифровая, оказывается онлайн, физическая доставка не предусмотрена.</li>
+            <li>Доступ открывается автоматически после подтверждения оплаты платёжным провайдером.</li>
+            <li>Порядок оплаты, возвратов и расторжения договора описан в <a className="dev-link" href="/offer">публичной оферте</a>.</li>
+          </ol>
+        </section>
+
+        <div className="document-links">
+          <a className="dev-link" href="/offer">Публичная оферта</a>
+          <a className="dev-link" href="/rules">Правила игры</a>
+          <a className="dev-link" href="/privacy">Политика конфиденциальности</a>
+          <a className="dev-link" href="/cookies">Cookie</a>
+        </div>
+        <a className="dev-link" href="/">Вернуться в игру</a>
+      </article>
+    </main>
+  );
+}
+
+function OfferApp() {
+  return (
+    <main className="operator-shell document-shell">
+      <header className="brand-plate" aria-label="Live to see it">
+        <span className="brand-mark">LTSI</span>
+        <span>Live to see it</span>
+        <GameLinks />
+        <SoundToggle />
+      </header>
+
+      <article className="panel document-panel">
+        <div className="panel-title">
+          <span className="panel-kicker">Публичная оферта</span>
+          <h1>Платный доступ к игре Live to see it</h1>
+        </div>
+
+        <p>
+          Настоящий документ является публичной офертой Индивидуального предпринимателя Авдеева Фёдора Васильевича (ИНН 121526595037, ОГРНИП 325120000052090), далее Исполнитель, в адрес любого дееспособного физического лица, далее Пользователь, и определяет условия оказания платной услуги участия в игре Live to see it.
+        </p>
+
+        <section className="document-section">
+          <h2>1. Предмет</h2>
+          <p>
+            Исполнитель предоставляет Пользователю платный доступ к одному раунду браузерной игры Live to see it, размещённой на сайте livetoseeit.ru. Услуга включает возможность зарегистрировать персонажа, выполнять ежедневную отметку Я живой и участвовать в распределении призового фонда раунда на условиях правил игры.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>2. Акцепт</h2>
+          <p>
+            Акцептом оферты считается совокупность действий Пользователя: регистрация на сайте, подтверждение электронной почты и оплата участия в текущем раунде. С момента акцепта между Исполнителем и Пользователем заключается возмездный договор оказания услуг на условиях настоящей оферты.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>3. Стоимость и порядок оплаты</h2>
+          <ol className="document-list">
+            <li>Стоимость участия в одном раунде составляет 2000 ₽ и не зависит от времени, проведённого в раунде.</li>
+            <li>Оплата производится единовременно через платёжного провайдера ЮKassa (ООО НКО ЮMoney). Реквизиты банковской карты обрабатываются на стороне провайдера.</li>
+            <li>Услуга считается оказанной с момента, когда Пользователю открыт доступ к участию в раунде по подтверждённой оплате.</li>
+            <li>Оплата возможна только до момента старта раунда, объявленного в панели игры. После старта приём оплат закрывается.</li>
+          </ol>
+        </section>
+
+        <section className="document-section">
+          <h2>4. Доставка</h2>
+          <p>
+            Услуга является цифровой и оказывается дистанционно через интернет. Физическая доставка не предусмотрена. Доступ открывается автоматически после успешной оплаты в личном кабинете Пользователя на сайте.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>5. Возвраты</h2>
+          <ol className="document-list">
+            <li>До старта раунда Пользователь может отказаться от участия и потребовать возврат уплаченной суммы. Возврат производится тем же способом, которым была произведена оплата, в срок до 10 рабочих дней.</li>
+            <li>После старта раунда услуга считается оказанной в момент открытия доступа: возврат возможен только при доказанной невозможности оказания услуги по вине Исполнителя.</li>
+            <li>Запрос на возврат направляется на адрес main.hubbox@mail.ru с указанием email учётной записи, даты оплаты и причины.</li>
+          </ol>
+        </section>
+
+        <section className="document-section">
+          <h2>6. Права и обязанности</h2>
+          <ol className="document-list">
+            <li>Исполнитель обязуется поддерживать работоспособность сайта в течение раунда и обеспечивать сохранность игровых данных Пользователя в разумных пределах.</li>
+            <li>Пользователь обязуется не нарушать правила игры, не предпринимать попытки обхода авторизации и оплаты, не использовать автоматизацию и не мешать другим участникам.</li>
+            <li>Исполнитель вправе отменить участие Пользователя без возврата стоимости, если установлено нарушение пункта 6.2, мошенничество с оплатой или иное недобросовестное поведение.</li>
+          </ol>
+        </section>
+
+        <section className="document-section">
+          <h2>7. Ответственность и форс-мажор</h2>
+          <p>
+            Стороны не несут ответственности за неисполнение обязательств, если это вызвано обстоятельствами непреодолимой силы, действиями третьих лиц или сбоями инфраструктуры провайдеров связи, хостинга и приёма платежей. В остальном ответственность сторон определяется законодательством Российской Федерации.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>8. Персональные данные</h2>
+          <p>
+            Порядок обработки персональных данных описан в <a className="dev-link" href="/privacy">Политике конфиденциальности</a>. Принимая оферту, Пользователь подтверждает согласие с её условиями.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>9. Изменение оферты</h2>
+          <p>
+            Исполнитель вправе изменять условия оферты в одностороннем порядке. Новая редакция вступает в силу с момента публикации на сайте livetoseeit.ru/offer и не распространяется на уже заключённые договоры до завершения соответствующего раунда.
+          </p>
+        </section>
+
+        <section className="document-section">
+          <h2>10. Реквизиты Исполнителя</h2>
+          <ol className="document-list">
+            <li>Индивидуальный предприниматель Авдеев Фёдор Васильевич.</li>
+            <li>ИНН: 121526595037.</li>
+            <li>ОГРНИП: 325120000052090.</li>
+            <li>Адрес: Республика Марий Эл, город Йошкар-Ола.</li>
+            <li>Электронная почта: main.hubbox@mail.ru.</li>
+            <li>Телефон: +7 (902) 736-93-22.</li>
+          </ol>
+        </section>
+
+        <div className="document-links">
+          <a className="dev-link" href="/contacts">Контакты и реквизиты</a>
+          <a className="dev-link" href="/rules">Правила игры</a>
+          <a className="dev-link" href="/privacy">Политика конфиденциальности</a>
+          <a className="dev-link" href="/cookies">Cookie</a>
+        </div>
         <a className="dev-link" href="/">Вернуться в игру</a>
       </article>
     </main>
@@ -273,6 +667,7 @@ function OperatorApp() {
       <header className="brand-plate" aria-label="Live to see it">
         <span className="brand-mark">LTSI</span>
         <span>Live to see it</span>
+        <SoundToggle />
       </header>
 
       {operator && (
@@ -341,10 +736,19 @@ function AuthPanel({ onAuth }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [devLink, setDevLink] = useState("");
   const [busy, setBusy] = useState(false);
+
+  function changeMode(nextMode) {
+    setMode(nextMode);
+    setError("");
+    setMessage("");
+    setDevLink("");
+    setPasswordConfirm("");
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -355,9 +759,14 @@ function AuthPanel({ onAuth }) {
 
     try {
       if (mode === "register") {
+        if (password !== passwordConfirm) {
+          setError("Пароли не совпадают.");
+          return;
+        }
+
         const result = await api("/api/auth/register", {
           method: "POST",
-          body: JSON.stringify({ email, password })
+          body: JSON.stringify({ email, password, passwordConfirm })
         });
         setDevLink(result.devVerificationUrl || "");
         setMessage("Письмо подтверждения отправлено.");
@@ -384,10 +793,10 @@ function AuthPanel({ onAuth }) {
       </div>
 
       <div className="tabs" role="tablist">
-        <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">
+        <button className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")} type="button">
           Вход
         </button>
-        <button className={mode === "register" ? "active" : ""} onClick={() => setMode("register")} type="button">
+        <button className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")} type="button">
           Регистрация
         </button>
       </div>
@@ -401,6 +810,12 @@ function AuthPanel({ onAuth }) {
           Пароль
           <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required />
         </label>
+        {mode === "register" && (
+          <label>
+            Подтвердите пароль
+            <input value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} type="password" minLength={8} autoComplete="new-password" required />
+          </label>
+        )}
         {error && <p className="form-error">{error}</p>}
         {message && <p className="form-success">{message}</p>}
         {devLink && (
@@ -416,11 +831,15 @@ function AuthPanel({ onAuth }) {
   );
 }
 
-function PaymentPanel({ me, world, onPaid }) {
+function RoundPanel({ me, world, onPaid }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const game = world?.game;
   const fee = game?.participationFeeRub || 3000;
+  const round = world?.round || {};
+  const canPay = round.canJoin && !round.isParticipant && me.status !== "dead";
+  const headline = roundHeadline(game, round);
+  const note = roundNote(game, round);
 
   async function startPayment() {
     setBusy(true);
@@ -429,6 +848,7 @@ function PaymentPanel({ me, world, onPaid }) {
       const result = await api("/api/payments/start", { method: "POST" });
       if (result.status === "paid") {
         await onPaid();
+        setBusy(false);
         return;
       }
       window.location.href = result.confirmationUrl;
@@ -439,20 +859,26 @@ function PaymentPanel({ me, world, onPaid }) {
   }
 
   return (
-    <section className="panel pay-panel" aria-label="Оплата участия">
+    <section className="panel round-panel" aria-label="Раунд">
       <div className="panel-title">
         <span className="panel-kicker">{me.email}</span>
-        <h1>{RUB.format(fee)}</h1>
+        <h1>{headline}</h1>
       </div>
-      <div className="pay-grid">
+      <div className="round-grid">
+        <Metric label="Старт игры" value={formatGameDate(game?.startAt)} />
+        <Metric label="Финиш игры" value={formatGameDate(game?.endAt)} />
+        <Metric label="Взнос" value={RUB.format(fee)} />
+        <Metric label="Орг. процент" value={`${game?.organizerFeePercent || 10}%`} />
         <Metric label="Банк" value={RUB.format(world?.bank?.prizeRub || 0)} />
-        <Metric label="Орг. сбор" value={`${game?.organizerFeePercent || 10}%`} />
+        <Metric label="Участников" value={String(world?.bank?.paidCount || 0)} />
       </div>
-      <p className="legal-note">Денежный призовой фонд подключайте только после юридической проверки модели.</p>
+      <p className="legal-note">{note}</p>
       {error && <p className="form-error">{error}</p>}
-      <button className="primary" disabled={busy} onClick={startPayment}>
-        {busy ? "..." : "Оплатить участие"}
-      </button>
+      {canPay && (
+        <button className="primary" disabled={busy} onClick={startPayment}>
+          {busy ? "..." : "Оплатить участие"}
+        </button>
+      )}
     </section>
   );
 }
@@ -460,6 +886,7 @@ function PaymentPanel({ me, world, onPaid }) {
 function GameControls({ me, world, refreshWorld }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const canMarkAlive = Boolean(world?.round?.canMarkAlive);
 
   async function markAlive() {
     setBusy(true);
@@ -488,13 +915,15 @@ function GameControls({ me, world, refreshWorld }) {
 
   return (
     <>
-      <section className="alive-dock" aria-label="Дневная отметка">
-        <button className="alive-button" disabled={busy || world?.aliveToday} onClick={markAlive}>
-          <HeartPulse size={20} />
-          {world?.aliveToday ? "Сегодня живой" : busy ? "..." : "Я живой"}
-        </button>
-        {error && <span className="inline-error">{error}</span>}
-      </section>
+      {canMarkAlive && (
+        <section className="alive-dock" aria-label="Дневная отметка">
+          <button className="alive-button" disabled={busy || world?.aliveToday} onClick={markAlive}>
+            <HeartPulse size={20} />
+            {world?.aliveToday ? "Сегодня живой" : busy ? "..." : "Я живой"}
+          </button>
+          {error && <span className="inline-error">{error}</span>}
+        </section>
+      )}
       <Dpad />
     </>
   );
@@ -506,7 +935,6 @@ function AdminPanel() {
     startAt: "",
     endAt: "",
     timezone: "Europe/Moscow",
-    participationFeeRub: 3000,
     organizerFeePercent: 10
   });
   const [error, setError] = useState("");
@@ -518,7 +946,6 @@ function AdminPanel() {
       startAt: toDatetimeLocal(data.game.startAt),
       endAt: toDatetimeLocal(data.game.endAt),
       timezone: data.game.timezone,
-      participationFeeRub: data.game.participationFeeRub,
       organizerFeePercent: data.game.organizerFeePercent
     });
   }, []);
@@ -582,10 +1009,6 @@ function AdminPanel() {
           <input value={form.timezone} onChange={(event) => setForm({ ...form, timezone: event.target.value })} />
         </label>
         <label>
-          Взнос
-          <input value={form.participationFeeRub} onChange={(event) => setForm({ ...form, participationFeeRub: Number(event.target.value) })} min="1" type="number" />
-        </label>
-        <label>
           Орг. %
           <input value={form.organizerFeePercent} onChange={(event) => setForm({ ...form, organizerFeePercent: Number(event.target.value) })} min="0" max="50" type="number" />
         </label>
@@ -616,13 +1039,15 @@ function PixelBackdrop({ world, me, audioEngine }) {
   const canvasRef = useRef(null);
   const meRef = useRef(me);
   const worldRef = useRef(world);
-  const demoGraveRef = useRef(null);
   const [localPosition, setLocalPosition] = useState(me?.position || { x: 0, y: 0 });
   const positionRef = useRef(me?.position || { x: 0, y: 0 });
   const movementRef = useRef({ x: 0, y: 0 });
   const lastSentRef = useRef(0);
 
   const applyMovement = useCallback((delta, forceSend = false) => {
+    const user = meRef.current;
+    if (!user || user.status === "dead") return;
+
     const position = positionRef.current;
     const next = { x: position.x + delta.x, y: position.y + delta.y };
     positionRef.current = next;
@@ -643,11 +1068,7 @@ function PixelBackdrop({ world, me, audioEngine }) {
     if (me?.position) {
       positionRef.current = me.position;
       setLocalPosition(me.position);
-      if (me.paidAt && !demoGraveRef.current) {
-        demoGraveRef.current = { x: me.position.x + 3, y: me.position.y + 1 };
-      }
     }
-    if (!me?.paidAt) demoGraveRef.current = null;
   }, [me?.id, me?.position?.x, me?.position?.y]);
 
   useEffect(() => {
@@ -680,7 +1101,7 @@ function PixelBackdrop({ world, me, audioEngine }) {
   useEffect(() => {
     const id = window.setInterval(() => {
       const user = meRef.current;
-      if (!user?.paidAt || user.status === "dead") return;
+      if (!user || user.status === "dead") return;
       const delta = movementRef.current;
       if (!delta.x && !delta.y) return;
 
@@ -712,7 +1133,6 @@ function PixelBackdrop({ world, me, audioEngine }) {
         height: window.innerHeight,
         world: worldRef.current,
         me: meRef.current,
-        demoGrave: demoGraveRef.current,
         localPosition,
         frame
       });
@@ -779,7 +1199,7 @@ function Metric({ label, value }) {
   );
 }
 
-function drawScene(ctx, { width, height, world, me, demoGrave, localPosition, frame }) {
+function drawScene(ctx, { width, height, world, me, localPosition, frame }) {
   ctx.clearRect(0, 0, width, height);
   const tile = 32;
   const camera = localPosition || me?.position || { x: 0, y: 0 };
@@ -800,7 +1220,7 @@ function drawScene(ctx, { width, height, world, me, demoGrave, localPosition, fr
   }
 
   const players = [...(world?.players || [])];
-  if (me?.paidAt && !players.some((player) => player.id === me.id)) {
+  if (me && !players.some((player) => player.id === me.id)) {
     players.push({
       id: me.id,
       email: me.email,
@@ -818,22 +1238,13 @@ function drawScene(ctx, { width, height, world, me, demoGrave, localPosition, fr
       position: player.id === me?.id ? localPosition : player.position
     }));
 
-  if (demoGrave) {
-    actors.push({
-      type: "demo-grave",
-      position: demoGrave
-    });
-  }
-
   actors
     .sort((a, b) => a.position.y - b.position.y)
     .forEach((actor) => {
       const sx = Math.round(width / 2 + (actor.position.x - camera.x) * tile);
       const sy = Math.round(height / 2 + (actor.position.y - camera.y) * tile);
       if (sx < -80 || sy < -80 || sx > width + 80 || sy > height + 80) return;
-      if (actor.type === "demo-grave") {
-        drawTombstone(ctx, sx, sy, false);
-      } else if (actor.player.status === "dead") {
+      if (actor.player.status === "dead") {
         drawTombstone(ctx, sx, sy, actor.player.id === me?.id);
       } else {
         drawPlayer(ctx, sx, sy, actor.player.color, actor.player.spriteVariant, frame, actor.player.id === me?.id);
@@ -1024,13 +1435,58 @@ function humanError(error) {
     INVALID_CREDENTIALS: "Неверная почта или пароль.",
     EMAIL_NOT_VERIFIED: "Подтвердите почту.",
     BAD_EMAIL_OR_PASSWORD: "Почта и пароль от 8 символов.",
+    PASSWORD_MISMATCH: "Пароли не совпадают.",
     AUTH_REQUIRED: "Нужно войти.",
     ADMIN_REQUIRED: "Нужны права администратора.",
     PAYMENT_REQUIRED: "Нужно оплатить участие.",
+    PAYMENT_PROVIDER_DISABLED: "Оплата скоро будет подключена.",
+    GAME_START_REQUIRED: "Старт игры еще не назначен.",
+    GAME_NOT_RUNNING: "Игра еще не идет.",
+    JOIN_CLOSED: "Набор в текущий раунд уже закрыт.",
+    NOT_CURRENT_PARTICIPANT: "Ты не участник текущего раунда.",
     PLAYER_DEAD: "Игрок уже умер.",
     REQUEST_FAILED: "Запрос не прошел."
   };
   return map[error] || error;
+}
+
+function roundHeadline(game, round) {
+  if (round.isParticipant && round.state === "running") return "Раунд идет";
+  if (round.isParticipant) return "Ты в раунде";
+  if (!game?.startAt) return "Старт скоро";
+  if (round.canJoin) return "Набор идет";
+  if (round.state === "running") return "Набор закрыт";
+  if (round.state === "ended") return "Финиш";
+  return statusText(round.state || game?.state);
+}
+
+function roundNote(game, round) {
+  if (round.isParticipant && round.state === "running") {
+    return "Отмечайся каждый день до финиша. Если пропустить день, персонаж умрет и останется могилка.";
+  }
+
+  if (round.isParticipant) {
+    return "Взнос принят до старта. Кнопка Я живой появится, когда игра начнется.";
+  }
+
+  if (!game?.startAt) {
+    return "Можно ходить по полю и пробовать игру. Оплата откроется после того, как будет назначен старт.";
+  }
+
+  if (round.canJoin) {
+    return "Можно ходить по полю бесплатно. Чтобы попасть в текущий банк, нужно оплатить взнос до старта игры.";
+  }
+
+  if (round.state === "running") {
+    return "Игра уже началась, поэтому вступить в текущий банк нельзя. Можно ходить по полю и ждать следующий раунд.";
+  }
+
+  return "Раунд завершен. Можно ходить по полю и ждать следующую игру.";
+}
+
+function formatGameDate(iso) {
+  if (!iso) return "не задано";
+  return DATE_TIME.format(new Date(iso));
 }
 
 function toDatetimeLocal(iso) {

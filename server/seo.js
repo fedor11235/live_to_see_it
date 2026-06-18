@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const PUBLIC_PATHS = ["/", "/cookies"];
+const PUBLIC_PATHS = ["/", "/rules", "/privacy", "/cookies"];
 
 const PAGE_META = {
   "/": {
@@ -15,6 +15,22 @@ const PAGE_META = {
   "/cookies": {
     title: "Cookie - Live to see it",
     description: "Какие необходимые cookie использует Live to see it для входа и сохранения игровой сессии.",
+    type: "article",
+    indexed: true,
+    schema: "article"
+  },
+  "/rules": {
+    title: "Правила игры - Live to see it",
+    description:
+      "Правила Live to see it: регистрация, взнос до старта, ежедневная отметка Я живой, банк, финиш и победители.",
+    type: "article",
+    indexed: true,
+    schema: "article"
+  },
+  "/privacy": {
+    title: "Политика конфиденциальности - Live to see it",
+    description:
+      "Как Live to see it обрабатывает email, cookie, игровые данные, платежные статусы и запросы пользователей.",
     type: "article",
     indexed: true,
     schema: "article"
