@@ -6,6 +6,8 @@ import {
   ArrowRight,
   ArrowUp,
   CalendarDays,
+  ChevronDown,
+  ChevronUp,
   Coins,
   FileText,
   HeartPulse,
@@ -141,6 +143,10 @@ function GameApp() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("verified") === "ok") setNotice("Почта подтверждена.");
+    if (params.get("payment") === "paid") setNotice("Оплата подтверждена. Участие в раунде открыто.");
+    if (params.get("payment") === "test-paid") setNotice("Тестовая оплата подтверждена. Доступ пока не сохраняем.");
+    if (params.get("payment") === "return") setNotice("Платеж отправлен на проверку. Доступ откроется после подтверждения банка.");
+    if (params.get("payment") === "failed") setNotice("Платеж не завершен. Можно попробовать еще раз.");
     if (params.get("payment") === "closed") setNotice("Набор в текущий раунд уже закрыт.");
 
     refreshMe()
@@ -832,14 +838,18 @@ function AuthPanel({ onAuth }) {
 }
 
 function RoundPanel({ me, world, onPaid }) {
+  const [collapsed, setCollapsed] = useState(() => window.matchMedia("(max-width: 760px)").matches);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const game = world?.game;
   const fee = game?.participationFeeRub || 3000;
   const round = world?.round || {};
+  const latestPayment = world?.latestPayment;
+  const paymentState = paymentStatus(latestPayment);
   const canPay = round.canJoin && !round.isParticipant && me.status !== "dead";
   const headline = roundHeadline(game, round);
   const note = roundNote(game, round);
+  const payButtonLabel = paymentActionLabel(paymentState);
 
   async function startPayment() {
     setBusy(true);
@@ -859,10 +869,26 @@ function RoundPanel({ me, world, onPaid }) {
   }
 
   return (
-    <section className="panel round-panel" aria-label="Раунд">
-      <div className="panel-title">
-        <span className="panel-kicker">{me.email}</span>
-        <h1>{headline}</h1>
+    <section className={`panel round-panel ${collapsed ? "is-collapsed" : ""}`} aria-label="Раунд">
+      <div className="round-panel-head">
+        <div className="panel-title">
+          <span className="panel-kicker">{me.email}</span>
+          <h1>{headline}</h1>
+        </div>
+        <button
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Развернуть раунд" : "Свернуть раунд"}
+          className="round-toggle"
+          onClick={() => setCollapsed((current) => !current)}
+          type="button"
+        >
+          <span>{collapsed ? "Открыть" : "Свернуть"}</span>
+          {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </button>
+      </div>
+      <div className="round-summary" aria-hidden={!collapsed}>
+        <span>{round.isParticipant ? "Участник раунда" : round.canJoin ? "Набор открыт" : statusText(round.state)}</span>
+        <strong>{RUB.format(world?.bank?.prizeRub || 0)}</strong>
       </div>
       <div className="round-grid">
         <Metric label="Старт игры" value={formatGameDate(game?.startAt)} />
@@ -873,10 +899,16 @@ function RoundPanel({ me, world, onPaid }) {
         <Metric label="Участников" value={String(world?.bank?.paidCount || 0)} />
       </div>
       <p className="legal-note">{note}</p>
+      {latestPayment && (
+        <div className={`payment-status ${paymentState.tone}`}>
+          <strong>{paymentState.title}</strong>
+          <span>{paymentState.detail}</span>
+        </div>
+      )}
       {error && <p className="form-error">{error}</p>}
       {canPay && (
         <button className="primary" disabled={busy} onClick={startPayment}>
-          {busy ? "..." : "Оплатить участие"}
+          {busy ? "..." : payButtonLabel}
         </button>
       )}
     </section>
@@ -935,6 +967,7 @@ function AdminPanel() {
     startAt: "",
     endAt: "",
     timezone: "Europe/Moscow",
+    participationFeeRub: 3000,
     organizerFeePercent: 10
   });
   const [error, setError] = useState("");
@@ -946,6 +979,7 @@ function AdminPanel() {
       startAt: toDatetimeLocal(data.game.startAt),
       endAt: toDatetimeLocal(data.game.endAt),
       timezone: data.game.timezone,
+      participationFeeRub: data.game.participationFeeRub,
       organizerFeePercent: data.game.organizerFeePercent
     });
   }, []);
@@ -1008,7 +1042,11 @@ function AdminPanel() {
           Таймзона
           <input value={form.timezone} onChange={(event) => setForm({ ...form, timezone: event.target.value })} />
         </label>
-        <label>
+        <label className="fee-field">
+          Взнос
+          <input value={form.participationFeeRub} onChange={(event) => setForm({ ...form, participationFeeRub: Number(event.target.value) })} min="1" type="number" />
+        </label>
+        <label className="org-field">
           Орг. %
           <input value={form.organizerFeePercent} onChange={(event) => setForm({ ...form, organizerFeePercent: Number(event.target.value) })} min="0" max="50" type="number" />
         </label>
@@ -1482,6 +1520,67 @@ function roundNote(game, round) {
   }
 
   return "Раунд завершен. Можно ходить по полю и ждать следующую игру.";
+}
+
+function paymentStatus(payment) {
+  if (!payment) {
+    return { tone: "neutral", title: "", detail: "" };
+  }
+
+  const providerStatus = payment.providerStatus ? ` (${payment.providerStatus})` : "";
+  const checkedAt = payment.providerCheckedAt ? ` Проверено: ${formatGameDate(payment.providerCheckedAt)}.` : "";
+
+  if (payment.status === "paid") {
+    return {
+      tone: "success",
+      title: "Оплата подтверждена",
+      detail: `Взнос ${RUB.format(payment.amount)} принят. Ты в текущем раунде.${checkedAt}`
+    };
+  }
+
+  if (payment.status === "test_confirmed") {
+    return {
+      tone: "test",
+      title: "Тестовая оплата подтверждена",
+      detail: `Т-Банк подтвердил платеж${providerStatus}. Сейчас доступ специально не сохраняем, чтобы можно было оплатить еще раз.${checkedAt}`
+    };
+  }
+
+  if (payment.status === "pending") {
+    return {
+      tone: "pending",
+      title: "Платеж проверяется",
+      detail: `Статус банка${providerStatus || ": ожидаем"}. Если оплата прошла, доступ откроется автоматически.${checkedAt}`
+    };
+  }
+
+  if (payment.status === "canceled") {
+    return {
+      tone: "error",
+      title: "Платеж отклонен",
+      detail: `Т-Банк не подтвердил платеж${providerStatus}. Можно попробовать оплатить еще раз.${checkedAt}`
+    };
+  }
+
+  if (payment.status === "expired") {
+    return {
+      tone: "error",
+      title: "Платеж устарел",
+      detail: `Этот платеж уже нельзя засчитать. Создай новый платеж до старта игры.${checkedAt}`
+    };
+  }
+
+  return {
+    tone: "neutral",
+    title: "Статус платежа",
+    detail: `${payment.status}${providerStatus}.${checkedAt}`
+  };
+}
+
+function paymentActionLabel(paymentState) {
+  if (paymentState.tone === "pending") return "Продолжить оплату";
+  if (paymentState.tone === "error") return "Повторить оплату";
+  return "Оплатить участие";
 }
 
 function formatGameDate(iso) {

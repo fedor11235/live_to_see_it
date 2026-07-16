@@ -23,7 +23,9 @@ const payments = createPaymentGateway({ env: process.env, store });
 const server = http.createServer(app);
 const realtime = createRealtime(server);
 
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 app.use(cookieParser());
 
 app.use((req, _res, next) => {
@@ -138,7 +140,8 @@ app.get("/api/me", (req, res) => {
   res.json({ user: req.user?.role === "player" ? sanitizeUser(req.user) : null });
 });
 
-app.get("/api/world", requireUser, (req, res) => {
+app.get("/api/world", requireUser, async (req, res) => {
+  await syncUserPaymentState(req.user);
   res.json(store.getWorld(req.user.id));
 });
 
@@ -174,7 +177,7 @@ app.post("/api/payments/start", requireUser, async (req, res, next) => {
       throw error;
     }
 
-    const origin = `${req.protocol}://${req.get("host")}`;
+    const origin = paymentOrigin(req);
     const result = await payments.startPayment(req.user, origin);
     res.json(result);
   } catch (error) {
@@ -187,10 +190,29 @@ app.get("/api/payments/mock/:paymentId/complete", (req, res) => {
   res.redirect(payment?.status === "paid" ? "/?payment=paid" : "/?payment=closed");
 });
 
+app.get("/api/payments/tbank/return/:paymentId", async (req, res) => {
+  const payment = await syncPaymentState(req.params.paymentId);
+  res.redirect(paymentReturnPath(payment));
+});
+
+app.get("/api/payments/tbank/fail/:paymentId", async (req, res) => {
+  const payment = await syncPaymentState(req.params.paymentId);
+  res.redirect(payment?.status === "paid" ? "/?payment=paid" : "/?payment=failed");
+});
+
 app.post("/api/payments/yookassa/webhook", async (req, res, next) => {
   try {
     const handled = await payments.handleYooKassaWebhook(req.body);
     res.json({ ok: true, handled });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/payments/tbank/webhook", async (req, res, next) => {
+  try {
+    await payments.handleTBankWebhook(req.body);
+    res.type("text/plain").send("OK");
   } catch (error) {
     next(error);
   }
@@ -398,4 +420,31 @@ function isKnownOperator(login) {
   if (login === operatorLogin()) return true;
   const user = store.findUserByEmail(String(login || ""));
   return user?.role === "admin";
+}
+
+async function syncUserPaymentState(user) {
+  try {
+    await payments.syncUserPayments(user);
+  } catch (error) {
+    console.warn("Payment sync failed", error.message);
+  }
+}
+
+async function syncPaymentState(paymentId) {
+  try {
+    return await payments.syncPayment(paymentId);
+  } catch (error) {
+    console.warn("Payment return sync failed", error.message);
+    return store.getPayment(paymentId);
+  }
+}
+
+function paymentOrigin(req) {
+  return (process.env.APP_URL || process.env.SITE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
+}
+
+function paymentReturnPath(payment) {
+  if (payment?.status === "paid") return "/?payment=paid";
+  if (payment?.status === "test_confirmed") return "/?payment=test-paid";
+  return "/?payment=return";
 }

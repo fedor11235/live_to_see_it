@@ -6,7 +6,7 @@ import { dayKeysBetween, gameWindowDateKeys, nowIso, previousDateKey, zonedDateK
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
-const FIXED_PARTICIPATION_FEE_RUB = 2000;
+const DEFAULT_PARTICIPATION_FEE_RUB = 3000;
 
 const COLORS = ["#ffcc5c", "#5ce1e6", "#ff6f91", "#a0f06b", "#f9a8ff", "#7bb0ff"];
 
@@ -28,7 +28,7 @@ export class Store {
         game: {
           title: "Live to see it",
           timezone: this.env.GAME_TIMEZONE || "Europe/Moscow",
-          participationFeeRub: FIXED_PARTICIPATION_FEE_RUB,
+          participationFeeRub: defaultParticipationFee(this.env),
           organizerFeePercent: Number(this.env.ORGANIZER_FEE_PERCENT || 10),
           startAt: null,
           endAt: null,
@@ -127,7 +127,7 @@ export class Store {
 
       assertJoinOpen(game);
 
-      const amount = FIXED_PARTICIPATION_FEE_RUB;
+      const amount = normalizeParticipationFee(game.participationFeeRub) || defaultParticipationFee(this.env);
       const organizerFee = Math.round(amount * Number(game.organizerFeePercent)) / 100;
       const prizeContribution = amount - organizerFee;
       const existingPending = data.payments.find((payment) => payment.userId === userId && payment.status === "pending");
@@ -176,12 +176,27 @@ export class Store {
     return payment ? { ...payment } : null;
   }
 
+  getPendingPaymentForUser(userId, provider = null) {
+    const data = this.read();
+    const payment = data.payments
+      .slice()
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.userId === userId &&
+          candidate.status === "pending" &&
+          (!provider || candidate.provider === provider)
+      );
+    return payment ? { ...payment } : null;
+  }
+
   markPaymentCanceled(paymentId, reason = "provider-canceled") {
     return this.mutate((data) => {
       const payment = data.payments.find((candidate) => candidate.id === paymentId);
       if (!payment || payment.status !== "pending") return payment || null;
       payment.status = "canceled";
       payment.canceledAt = nowIso();
+      payment.cancelReason = reason;
       data.audit.push(audit("payment.canceled", payment.userId, { paymentId, reason }));
       return payment;
     });
@@ -192,7 +207,7 @@ export class Store {
       const payment = data.payments.find((candidate) => candidate.id === paymentId);
       if (!payment) return null;
       if (payment.status === "paid") return payment;
-      if (payment.status !== "pending") return payment;
+      if (!["pending", "canceled"].includes(payment.status)) return payment;
 
       if (!canJoinGame(data.game)) {
         payment.status = "expired";
@@ -290,9 +305,10 @@ export class Store {
           startAt: patch.startAt || null,
           endAt: patch.endAt || null,
           timezone: patch.timezone,
+          participationFeeRub:
+            patch.participationFeeRub !== undefined ? normalizeParticipationFee(patch.participationFeeRub) : undefined,
           organizerFeePercent: Number(patch.organizerFeePercent)
-        }),
-        participationFeeRub: FIXED_PARTICIPATION_FEE_RUB
+        })
       };
 
       data.game.state = deriveGameState(data.game);
@@ -353,7 +369,7 @@ export class Store {
     const data = this.read();
     const game = {
       ...data.game,
-      participationFeeRub: FIXED_PARTICIPATION_FEE_RUB,
+      participationFeeRub: normalizeParticipationFee(data.game.participationFeeRub) || defaultParticipationFee(this.env),
       state: deriveGameState(data.game)
     };
     const bank = calculateBank(data.payments);
@@ -366,6 +382,7 @@ export class Store {
       bank,
       today,
       round: currentUser ? getRoundStatus(game, currentUser) : getRoundStatus(game, null),
+      latestPayment: currentUser ? sanitizePayment(latestPaymentForUser(data.payments, currentUser.id)) : null,
       aliveToday: currentUserId
         ? data.aliveChecks.some((check) => check.userId === currentUserId && check.date === today)
         : false,
@@ -390,7 +407,10 @@ export class Store {
     this.sweepDeaths();
     const data = this.read();
     return {
-      game: { ...data.game, participationFeeRub: FIXED_PARTICIPATION_FEE_RUB },
+      game: {
+        ...data.game,
+        participationFeeRub: normalizeParticipationFee(data.game.participationFeeRub) || defaultParticipationFee(this.env)
+      },
       bank: calculateBank(data.payments),
       users: data.users
         .filter((user) => user.role === "player")
@@ -437,6 +457,24 @@ export function sanitizeUser(user) {
   };
 }
 
+function sanitizePayment(payment) {
+  if (!payment) return null;
+  return {
+    id: payment.id,
+    provider: payment.provider,
+    amount: payment.amount,
+    status: payment.status,
+    providerStatus: payment.providerStatus || null,
+    createdAt: payment.createdAt,
+    paidAt: payment.paidAt,
+    canceledAt: payment.canceledAt || null,
+    expiredAt: payment.expiredAt || null,
+    testConfirmedAt: payment.testConfirmedAt || null,
+    cancelReason: payment.cancelReason || null,
+    providerCheckedAt: payment.providerCheckedAt || null
+  };
+}
+
 export function calculateBank(payments) {
   const paid = payments.filter((payment) => payment.status === "paid");
   return paid.reduce(
@@ -448,6 +486,12 @@ export function calculateBank(payments) {
     }),
     { grossRub: 0, prizeRub: 0, organizerRub: 0, paidCount: 0 }
   );
+}
+
+function latestPaymentForUser(payments, userId) {
+  return payments
+    .filter((payment) => payment.userId === userId)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0] || null;
 }
 
 function calculateWinners(data) {
@@ -524,6 +568,16 @@ function getRoundStatus(game, user) {
     isParticipant,
     canMarkAlive: Boolean(user && user.status !== "dead" && isParticipant && state === "running")
   };
+}
+
+function defaultParticipationFee(env) {
+  return normalizeParticipationFee(env.PARTICIPATION_FEE_RUB) || DEFAULT_PARTICIPATION_FEE_RUB;
+}
+
+function normalizeParticipationFee(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 1) return undefined;
+  return clampInteger(number, 1, 1_000_000);
 }
 
 function pickDefined(object) {
